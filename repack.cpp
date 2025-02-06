@@ -1,4 +1,5 @@
 #include <cassert>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -7,6 +8,7 @@
 #include <fstream>
 #include <ios>
 #include <iostream>
+#include <sstream>
 #include <utility>
 #include <vector>
 
@@ -22,6 +24,12 @@ struct blockM
 {
 	uint64_t offset;
 	uint64_t size;
+};
+
+struct miniBlock
+{
+	uint32_t offset;
+	uint32_t size;
 };
 
 // somehow basic.ptz broke (also in bizzare)
@@ -74,7 +82,7 @@ size_t decompress(int16_t* inputBuffer, int16_t* outputBuffer, size_t size) {
 
 		bitMask >>= 1;
 	}
-	return outPtr - outputBuffer;
+	return (outPtr - outputBuffer) * sizeof(int16_t);
 }
 
 enum fileType
@@ -84,6 +92,16 @@ enum fileType
 	ptx, // where offset is 2048 (0x800)
 	momo
 };
+
+const char* fileTypeExt(fileType ft)
+{
+	switch (ft) {
+		case momo: return "bin";
+		case tim2: return "tm2";
+		case ptx: return "ptx";
+		default: return "unk";
+	}
+}
 
 fileType findFileType(std::vector<char>& f, size_t fsize)
 {
@@ -96,10 +114,10 @@ fileType findFileType(std::vector<char>& f, size_t fsize)
 		char tmp[4] = {f[2], f[3], f[4], f[5]};
 		if(memcmp(tmp, tim2Header, 4) == 0 || memcmp(tmp, momoHeader, 4) == 0)
 		{
-			std::vector<char> decompressed_data(fsize*2);
-			size_t decompressed_size = decompress(reinterpret_cast<int16_t*>(f.data()), reinterpret_cast<int16_t*>(decompressed_data.data()), decompressed_data.size());
+			std::vector<char> decompressed_data(fsize * 2 * sizeof(int16_t));
+			size_t decompressed_size = decompress(reinterpret_cast<int16_t*>(f.data()), reinterpret_cast<int16_t*>(decompressed_data.data()), fsize);
+			
 			if (decompressed_size == 0) return unk;
-			printf("%c %c %c %c\n", f[0], f[1], f[2], f[3]);
 
 			decompressed_data.resize(decompressed_size);
 			f = std::move(decompressed_data);
@@ -116,10 +134,9 @@ fileType findFileType(std::vector<char>& f, size_t fsize)
 				char lm2[4] = {f[0x52], f[0x53], f[0x54], f[0x55]}; // idk if right, but found only in basic.ptz
 				if(memcmp(lm2, tim2Header, 4) == 0)
 				{
-					std::vector<char> decompressed_data(fsize*2);
-					size_t decompressed_size = decompress(reinterpret_cast<int16_t*>(f.data()), reinterpret_cast<int16_t*>(decompressed_data.data()), fsize*2);
+					std::vector<char> decompressed_data(fsize * 2 * sizeof(int16_t));
+					size_t decompressed_size = decompress(reinterpret_cast<int16_t*>(f.data()), reinterpret_cast<int16_t*>(decompressed_data.data()), decompressed_data.size());
 					if (decompressed_size == 0) return unk;
-					phere;
 					decompressed_data.resize(decompressed_size);
 					f = std::move(decompressed_data);
 					return findFileType(f, decompressed_size);
@@ -142,6 +159,89 @@ void printUsageError(const char* m, const char* arg)
 {
 	printf("-- Unknown argument: \"%s\"\n", arg);
 	printHelp(m);
+}
+
+void momoUnpack(std::vector<char>& buffer, const char* dirname)
+{
+	std::istringstream f(std::string(buffer.begin(), buffer.end()), std::ios::binary);
+
+	std::vector<blockM> blocks;
+	std::vector<miniBlock> mBlocks;
+
+	size_t blocks_count;
+
+	bool mb = false;
+	char c;
+	f.seekg(sizeof(uint32_t));
+	f.read(&c, 1);
+	if (c != 0x0)
+		mb = true;
+
+	if(!mb)
+	{
+		f.seekg(sizeof(uint64_t), std::ios::beg);
+		f.read(reinterpret_cast<char*>(&blocks_count), sizeof(uint64_t));
+	}else{
+		f.seekg(sizeof(uint32_t), std::ios::beg);
+		uint32_t tbc;
+		f.read(reinterpret_cast<char*>(&tbc), sizeof(uint32_t));
+		blocks_count = tbc;
+	}
+
+	for(size_t i = 0; i < blocks_count; i++)
+	{
+		if(!mb){
+			blockM block;
+			f.read(reinterpret_cast<char*>(&block), sizeof(block));
+			blocks.push_back(block);
+		}else{	
+			miniBlock mblock;
+			f.read(reinterpret_cast<char*>(&mblock), sizeof(mblock));
+			mBlocks.push_back(mblock);
+		}
+	}
+	f.seekg(0, std::ios::beg);
+
+	if(!std::filesystem::is_directory(dirname))
+	{
+		if(std::filesystem::create_directory(dirname))
+		{
+			printf("-- Directory \"%s\" created\n", dirname);
+		}
+	}
+
+	size_t bsize = mb ? mBlocks.size() : blocks.size();
+
+	for(size_t i = 0; i < bsize; i++)
+	{
+		uint64_t o, s;
+		if(!mb){
+			o = blocks[i].offset;
+			s = blocks[i].size;
+		}else{
+			o = mBlocks[i].offset;
+			s = mBlocks[i].size;
+		}
+
+		char* ufn = new char[6 + strlen(dirname) + 1 + 3];
+		assert(o + s <= buffer.size()); // check if filesize is bigger or equal
+
+		std::vector<char> buff(s);
+		f.seekg(o, std::ios::beg);
+		f.read(buff.data(), s);
+
+		fileType ft = findFileType(buff, buff.size());
+
+		sprintf(ufn, "%s/id%lu.%s", dirname, i, fileTypeExt(ft));
+		printf("-- Writing to \"%s\", offset: %lu, size: %lu\n", ufn, o, s);
+
+		std::ofstream uf(ufn);
+		uf.write(buff.data(), s);
+		uf.close();
+
+		buff.clear();
+		delete [] ufn;
+	}
 }
 
 void doSomethingWithFile(const char* filename)
@@ -174,61 +274,18 @@ void doSomethingWithFile(const char* filename)
 
 	fileType ft = findFileType(buff, fsize);
 
+	bool isCompressed = (fsize != buff.size()) ? true : false;
 	printf("-- File size: %lu\n", fsize);
-	printf("-- File type: %i\n", ft);
+	if(isCompressed)
+		printf("-- Decompressed size: %lu\n", buff.size());
+	printf("-- File type: %s\n", fileTypeExt(ft));
 
+	std::filesystem::path ap = std::filesystem::absolute(filename);
+        std::filesystem::path dirname = ap.parent_path() / ("_" + ap.filename().string());
 
-	// char* dirname = new char[sizeof(filename) + 1];
-	// sprintf(dirname, "_%s", filename);
-	// if(!compressed)
-	// {
-	// 	std::vector<blockM> blocks;
-	// 	uint64_t blocks_count;
-	// 	f.seekg(8);
-	// 	f.read(reinterpret_cast<char*>(&blocks_count), sizeof(blocks_count));
-	// 	for(size_t i = 0; i < blocks_count; i++)
-	// 	{
-	// 		blockM block;
-	// 		f.read(reinterpret_cast<char*>(&block), sizeof(block));
-	// 		blocks.push_back(block);
-	// 	}
-	// 	f.seekg(0, std::ios::beg);
-	//
-	// 	if(!std::filesystem::is_directory(dirname))
-	// 	{
-	// 		if(std::filesystem::create_directory(dirname))
-	// 		{
-	// 			printf("-- Directory \"%s\" created\n", dirname);
-	// 		}
-	// 	}
-	//
-	// 	for(size_t i = 0; i < blocks.size(); i++)
-	// 	{
-	// 		uint64_t o = blocks[i].offset;
-	// 		uint64_t s = blocks[i].size;
-	// 			
-	// 		char* ufn = new char[6 + sizeof(dirname) + 1];
-	// 		sprintf(ufn, "%s/id%lu", dirname, i);
-	// 		printf("-- Writing to \"%s\", offset: %lu, size: %lu\n", ufn, o, s);
-	// 		assert(o + s <= fsize); // check if filesize is bigger or equal
-	// 		
-	// 		std::vector<char> buff(s);
-	// 		f.seekg(o, std::ios::beg);
-	// 		f.read(buff.data(), s);
-	//
-	// 		std::ofstream uf(ufn);
-	// 		uf.write(buff.data(), s);
-	// 		uf.close();
-	//
-	// 		buff.clear();
-	// 		delete [] ufn;
-	// 	}
-	// }
-	// else
-	// {
-	// 	
-	// }
-	// delete [] dirname;
+	if(ft == momo)
+		momoUnpack(buff, dirname.string().c_str());
+
 }
 
 int main(int argc, char** argv)
