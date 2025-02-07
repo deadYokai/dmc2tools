@@ -114,7 +114,7 @@ fileType findFileType(std::vector<char>& f, size_t fsize)
 	char tim2Header[4] = {'T', 'I', 'M', '2'};
 	char ipumHeader[4] = {'i', 'p', 'u', 'm'};
 
-	if((magic[2] == momoHeader[0] && magic[1] == momoHeader[3]) || (magic[2] == tim2Header[0] && magic[3] == tim2Header[1]))
+	if((magic[2] == momoHeader[0] && magic[3] == momoHeader[1] && magic[0] != momoHeader[0]) || (magic[2] == tim2Header[0] && magic[3] == tim2Header[1]))
 	{
 		char tmp[4] = {f[2], f[3], f[4], f[5]};
 		if(memcmp(tmp, tim2Header, 4) == 0 || memcmp(tmp, momoHeader, 4) == 0)
@@ -128,7 +128,6 @@ fileType findFileType(std::vector<char>& f, size_t fsize)
 			f = std::move(decompressed_data);
 			return findFileType(f, decompressed_size);
 		}
-		return (memcmp(magic, momoHeader, 4) == 0) ? momo : tim2;
 	}
 	else if(memcmp(magic, momoHeader, 4) == 0)
 		return momo;
@@ -158,6 +157,17 @@ fileType findFileType(std::vector<char>& f, size_t fsize)
 	}
 
 	return unk;
+}
+
+fileType findFileType(const char* path)
+{
+	std::ifstream f(path, std::ios::binary | std::ios::ate);
+	size_t fsize = f.tellg();
+	f.seekg(0, std::ios::beg);
+	std::vector<char> buff(fsize);
+	f.read(buff.data(), buff.size());
+	f.close();
+	return findFileType(buff, fsize);
 }
 
 int met = UNPACK;
@@ -397,6 +407,27 @@ void momoUnpack(std::vector<char>& buffer, const char* dirname, std::filesystem:
 		uf.write(buff.data(), s);
 		uf.close();
 
+		std::filesystem::path ap = std::filesystem::absolute(ufn);
+		std::filesystem::path bn = ap.filename();
+		std::filesystem::path dn = ap.parent_path() / ("_" + bn.string());
+
+
+		switch (ft) {
+			case momo:
+				momoUnpack(buff, dn.string().c_str(), bn, false);
+				break;
+			case ptx:
+				ptxUnpack(buff, dn.string().c_str(), bn, false);
+				break;
+			case tim2:
+				tim2Unpack(buff, dn.string().c_str(), bn, false);
+				break;
+			case ipu:
+				ipumUnpack(buff, dn.string().c_str(), bn, false);
+				break;
+			default:
+				return;
+		}
 		buff.clear();
 
 		std::filesystem::path _t = std::filesystem::absolute(ufn).filename();
@@ -412,7 +443,6 @@ void momoUnpack(std::vector<char>& buffer, const char* dirname, std::filesystem:
 	delete [] tc;
 	metadata.close();
 }
-
 
 void unpack(const char* filename)
 {
