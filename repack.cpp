@@ -34,7 +34,6 @@ struct miniBlock
 	uint32_t size;
 };
 
-// somehow basic.ptz broke (also in bizzare)
 size_t decompress(int16_t* inputBuffer, int16_t* outputBuffer, size_t size) {
 	uint32_t bitBuffer = 0;
 	uint32_t bitMask = 0;
