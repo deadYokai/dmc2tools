@@ -14,6 +14,8 @@
 
 #define phere printf("here?\n")
 
+#define DBUFFER_SIZE 8 * 1024 * 1024 // 8 MiB for now
+
 enum
 {
 	UNPACK,
@@ -114,7 +116,7 @@ fileType findFileType(std::vector<char>& f, size_t fsize)
 		char tmp[4] = {f[2], f[3], f[4], f[5]};
 		if(memcmp(tmp, tim2Header, 4) == 0 || memcmp(tmp, momoHeader, 4) == 0)
 		{
-			std::vector<char> decompressed_data(fsize * 2 * sizeof(int16_t));
+			std::vector<char> decompressed_data(DBUFFER_SIZE * sizeof(int16_t));
 			size_t decompressed_size = decompress(reinterpret_cast<int16_t*>(f.data()), reinterpret_cast<int16_t*>(decompressed_data.data()), fsize);
 			
 			if (decompressed_size == 0) return unk;
@@ -134,7 +136,7 @@ fileType findFileType(std::vector<char>& f, size_t fsize)
 				char lm2[4] = {f[0x52], f[0x53], f[0x54], f[0x55]}; // idk if right, but found only in basic.ptz
 				if(memcmp(lm2, tim2Header, 4) == 0)
 				{
-					std::vector<char> decompressed_data(fsize * 2 * sizeof(int16_t));
+					std::vector<char> decompressed_data(DBUFFER_SIZE * sizeof(int16_t));
 					size_t decompressed_size = decompress(reinterpret_cast<int16_t*>(f.data()), reinterpret_cast<int16_t*>(decompressed_data.data()), decompressed_data.size());
 					if (decompressed_size == 0) return unk;
 					decompressed_data.resize(decompressed_size);
