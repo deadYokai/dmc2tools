@@ -178,9 +178,79 @@ void ptxUnpack(std::vector<char>& buffer, const char* dirname, std::filesystem::
 
 }
 
+struct Tim2Header
+{
+	char magic[4];
+	char formatVer;
+	char formatId;
+	uint16_t count;
+	char pad[8];
+};
+
+struct Tim2PicHeader
+{
+	uint32_t totalSize;
+	uint32_t clutSize;
+	uint32_t imgSize;
+	uint16_t headerSize;
+	uint16_t clutColors;
+	char picFormat;
+	char MipMapTextures;
+	char clutType;
+	char ImageType;
+	uint16_t ImageWidth;
+	uint16_t ImageHeight;
+
+	uint64_t GsTex0;
+	uint64_t GsTex1;
+	uint32_t GsTexaFbaPabe;
+	uint32_t GsTexClut;
+};
+
 void tim2Unpack(std::vector<char>& buffer, const char* dirname, std::filesystem::path basename, bool isc)
 {
-
+	// to pack TotalSize = sizeof(Tim2PicHeader) + imgSize;
+	std::istringstream f(std::string(buffer.begin(), buffer.end()), std::ios::binary);
+	f.seekg(0, std::ios::beg);
+	Tim2Header t2header;
+	Tim2PicHeader t2pic;
+	f.read(reinterpret_cast<char*>(&t2header), sizeof(t2header));
+	if(t2header.formatId != 0x0)
+		f.seekg(0x80, std::ios::beg);
+	f.read(reinterpret_cast<char*>(&t2pic), sizeof(t2pic));
+	f.seekg(t2pic.headerSize - sizeof(t2pic), std::ios::cur);
+	size_t pos = f.tellg();
+	char ddsMagic[4] = {'D', 'D', 'S', ' '};
+	char* texture = new char[t2pic.imgSize];
+	f.read(texture, t2pic.imgSize);
+	if(memcmp(texture, ddsMagic, 4) != 0)
+	{
+		printf("-E Supported only PC format of DMC2 textures\n");
+		exit(-1);
+	}
+	if(!std::filesystem::is_directory(dirname))
+	{
+		if(std::filesystem::create_directory(dirname))
+		{
+			printf("-- Directory \"%s\" created\n", dirname);
+		}
+	}
+	char* tn = new char[strlen(dirname) + strlen(basename.c_str()) + 6];
+	sprintf(tn, "%s/%s.dds", dirname, basename.c_str());
+	printf("-- Writing texture to \"%s\"\n", tn);
+	std::ofstream dds(tn, std::ios::binary);
+	dds.write(texture, t2pic.imgSize);
+	dds.close();
+	delete [] tn;
+	char* tc = new char[f.tellg()];
+	sprintf(tc, "%s/.meta.%s", dirname, basename.c_str());
+	std::ofstream metadata(tc, std::ios::binary);
+	f.seekg(0, std::ios::beg);
+	char* _r = new char[pos];
+	f.read(_r, pos);
+	metadata.write(_r, pos);
+	metadata.close();
+	delete [] tc;
 }
 
 void momoUnpack(std::vector<char>& buffer, const char* dirname, std::filesystem::path basename, bool isc)
