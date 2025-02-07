@@ -9,6 +9,7 @@
 #include <ios>
 #include <iostream>
 #include <sstream>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -91,6 +92,7 @@ enum fileType
 	unk = -1,
 	tim2,
 	ptx, // where offset is 2048 (0x800)
+	ipu,
 	momo
 };
 
@@ -100,6 +102,7 @@ const char* fileTypeExt(fileType ft)
 		case momo: return "bin";
 		case tim2: return "tm2";
 		case ptx: return "ptx";
+		case ipu: return "ipu";
 		default: return "unk";
 	}
 }
@@ -109,6 +112,7 @@ fileType findFileType(std::vector<char>& f, size_t fsize)
 	char magic[4] = {f[0], f[1], f[2], f[3]};
 	char momoHeader[4] = {'M', 'O', 'M', 'O'};
 	char tim2Header[4] = {'T', 'I', 'M', '2'};
+	char ipumHeader[4] = {'i', 'p', 'u', 'm'};
 
 	if((magic[2] == momoHeader[2] && magic[3] == momoHeader[3]) || (magic[2] == tim2Header[2] && magic[3] == tim2Header[3]))
 	{
@@ -126,13 +130,15 @@ fileType findFileType(std::vector<char>& f, size_t fsize)
 		}
 		return (memcmp(magic, momoHeader, 4) == 0) ? momo : tim2;
 	}else{
+		if(memcmp(magic, ipumHeader, 4) == 0)
+			return ipu;
 		if(fsize > (2048 + 512)){ // offset + some data stuff
 			char lm[4] = {f[2048], f[2049], f[2050], f[2051]};
 			if(memcmp(lm, tim2Header, 4) == 0)
 				return ptx;
 			else
 			{
-				char lm2[4] = {f[0x52], f[0x53], f[0x54], f[0x55]}; // idk if right, but found only in basic.ptz
+				char lm2[4] = {f[0x12], f[0x13], f[0x14], f[0x15]}; // idk if right, but found only in basic.ptz
 				if(memcmp(lm2, tim2Header, 4) == 0)
 				{
 					std::vector<char> decompressed_data(DBUFFER_SIZE * sizeof(int16_t));
@@ -162,7 +168,22 @@ void printUsageError(const char* m, const char* arg)
 	printHelp(m);
 }
 
-void momoUnpack(std::vector<char>& buffer, const char* dirname)
+void ipumUnpack(std::vector<char>& buffer, const char* dirname, std::filesystem::path basename, bool isc)
+{
+
+}
+
+void ptxUnpack(std::vector<char>& buffer, const char* dirname, std::filesystem::path basename, bool isc)
+{
+
+}
+
+void tim2Unpack(std::vector<char>& buffer, const char* dirname, std::filesystem::path basename, bool isc)
+{
+
+}
+
+void momoUnpack(std::vector<char>& buffer, const char* dirname, std::filesystem::path basename, bool isc)
 {
 	std::istringstream f(std::string(buffer.begin(), buffer.end()), std::ios::binary);
 
@@ -213,6 +234,13 @@ void momoUnpack(std::vector<char>& buffer, const char* dirname)
 
 	size_t bsize = mb ? mBlocks.size() : blocks.size();
 
+	char* tc = new char[strlen(dirname) + 12];
+	sprintf(tc, "%s/.metadata", dirname);
+	std::vector<std::string> metadataBuffer;
+	metadataBuffer.push_back(basename);
+	if(isc)
+		metadataBuffer.push_back("_compressed");
+	
 	for(size_t i = 0; i < bsize; i++)
 	{
 		uint64_t o, s;
@@ -241,11 +269,23 @@ void momoUnpack(std::vector<char>& buffer, const char* dirname)
 		uf.close();
 
 		buff.clear();
+
+		std::filesystem::path _t = std::filesystem::absolute(ufn).filename();
+		metadataBuffer.push_back(_t);
 		delete [] ufn;
 	}
+	printf("-- Creating \"%s/.metadata\" file\n", dirname);
+	std::ofstream metadata(tc, std::ios::out);
+	for(const auto e : metadataBuffer)
+	{
+		metadata << e << '\n';
+	}
+	delete [] tc;
+	metadata.close();
 }
 
-void doSomethingWithFile(const char* filename)
+
+void unpack(const char* filename)
 {
 	if(!std::filesystem::exists(filename))
 	{
@@ -282,11 +322,34 @@ void doSomethingWithFile(const char* filename)
 	printf("-- File type: %s\n", fileTypeExt(ft));
 
 	std::filesystem::path ap = std::filesystem::absolute(filename);
-        std::filesystem::path dirname = ap.parent_path() / ("_" + ap.filename().string());
+	std::filesystem::path basename = ap.filename();
+        std::filesystem::path dirname = ap.parent_path() / ("_" + basename.string());
 
-	if(ft == momo)
-		momoUnpack(buff, dirname.string().c_str());
+	switch (ft) {
+		case momo:
+			momoUnpack(buff, dirname.string().c_str(), basename, isCompressed);
+			break;
+		case ptx:
+			ptxUnpack(buff, dirname.string().c_str(), basename, isCompressed);
+			break;
+		case tim2:
+			tim2Unpack(buff, dirname.string().c_str(), basename, isCompressed);
+			break;
+		case ipu:
+			ipumUnpack(buff, dirname.string().c_str(), basename, isCompressed);
+			break;
+		default:
+			return;
+	}
 
+}
+
+void doSomethingWithFile(const char* filename)
+{
+	if(met == UNPACK)
+		unpack(filename);
+	else
+		printf("Not implemented yet.\n");
 }
 
 int main(int argc, char** argv)
