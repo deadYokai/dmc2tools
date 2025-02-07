@@ -168,8 +168,62 @@ void printUsageError(const char* m, const char* arg)
 	printHelp(m);
 }
 
+struct ipumHeader
+{
+	char magic[4];
+	uint32_t unk1;
+	uint32_t unk2;
+	uint32_t frameCount;
+	uint32_t framerate;
+};
+
 void ipumUnpack(std::vector<char>& buffer, const char* dirname, std::filesystem::path basename, bool isc)
 {
+	std::istringstream f(std::string(buffer.begin(), buffer.end()), std::ios::binary);
+	f.seekg(0, std::ios::beg);
+	ipumHeader ipu;
+	f.read(reinterpret_cast<char*>(&ipu), sizeof(ipu));
+	printf("-- Ipum frame count: %i\n", ipu.frameCount);
+	if(!std::filesystem::is_directory(dirname))
+	{
+		if(std::filesystem::create_directory(dirname))
+		{
+			printf("-- Directory \"%s\" created\n", dirname);
+		}
+	}
+	
+	char* tc = new char[strlen(dirname) + strlen(basename.c_str()) + 6];
+	sprintf(tc, "%s/.meta.%s", dirname, basename.c_str());
+	std::ofstream metadata(tc, std::ios::binary);
+	metadata.write(reinterpret_cast<char*>(&ipu), sizeof(ipu));
+	metadata.close();
+	delete [] tc;
+
+	for(uint32_t i = 0; i < ipu.frameCount; i++)
+	{
+		char frameStart[4];
+		char frameEnd[4];
+		uint32_t tSize;
+		f.read(frameStart, 4);
+		f.read(reinterpret_cast<char*>(&tSize), 4);
+		char* texture = new char[tSize];
+		f.read(texture, tSize-4);
+		f.read(frameEnd, 4);
+		char* tn = new char[strlen(dirname) + sizeof(uint32_t) + 12];
+		sprintf(tn, "%s/frame%i.dds", dirname, i);
+		char* tnm = new char[strlen(dirname) + sizeof(uint32_t) + 12 + 1];
+		sprintf(tnm, "%s/frame%i.meta", dirname, i);
+		printf("-- Writing texture to \"%s\"\n", tn);
+		std::ofstream dt(tnm, std::ios::binary);
+		dt.write(frameEnd, 4);
+		dt.close();
+		std::ofstream dds(tn, std::ios::binary);
+		dds.write(texture, tSize);
+		delete [] texture;
+		dds.close();
+		delete [] tnm;
+		delete [] tn;
+	}
 
 }
 
