@@ -114,7 +114,7 @@ fileType findFileType(std::vector<char>& f, size_t fsize)
 	char tim2Header[4] = {'T', 'I', 'M', '2'};
 	char ipumHeader[4] = {'i', 'p', 'u', 'm'};
 
-	if((magic[2] == momoHeader[2] && magic[3] == momoHeader[3]) || (magic[2] == tim2Header[2] && magic[3] == tim2Header[3]))
+	if((magic[2] == momoHeader[0] && magic[1] == momoHeader[3]) || (magic[2] == tim2Header[0] && magic[3] == tim2Header[1]))
 	{
 		char tmp[4] = {f[2], f[3], f[4], f[5]};
 		if(memcmp(tmp, tim2Header, 4) == 0 || memcmp(tmp, momoHeader, 4) == 0)
@@ -129,9 +129,14 @@ fileType findFileType(std::vector<char>& f, size_t fsize)
 			return findFileType(f, decompressed_size);
 		}
 		return (memcmp(magic, momoHeader, 4) == 0) ? momo : tim2;
-	}else{
-		if(memcmp(magic, ipumHeader, 4) == 0)
-			return ipu;
+	}
+	else if(memcmp(magic, momoHeader, 4) == 0)
+		return momo;
+	else if(memcmp(magic, tim2Header, 4) == 0)
+		return tim2;
+	else if(memcmp(magic, ipumHeader, 4) == 0)
+		return ipu;
+	else{
 		if(fsize > (2048 + 512)){ // offset + some data stuff
 			char lm[4] = {f[2048], f[2049], f[2050], f[2051]};
 			if(memcmp(lm, tim2Header, 4) == 0)
@@ -388,7 +393,7 @@ void momoUnpack(std::vector<char>& buffer, const char* dirname, std::filesystem:
 		sprintf(ufn, "%s/id%lu.%s", dirname, i, fileTypeExt(ft));
 		printf("-- Writing to \"%s\", offset: %lu, size: %lu\n", ufn, o, s);
 
-		std::ofstream uf(ufn);
+		std::ofstream uf(ufn, std::ios::binary);
 		uf.write(buff.data(), s);
 		uf.close();
 
