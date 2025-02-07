@@ -192,8 +192,8 @@ void ipumUnpack(std::vector<char>& buffer, const char* dirname, std::filesystem:
 		}
 	}
 	
-	char* tc = new char[strlen(dirname) + strlen(basename.c_str()) + 6];
-	sprintf(tc, "%s/.meta.%s", dirname, basename.c_str());
+	char* tc = new char[strlen(dirname) + strlen(basename.string().c_str()) + 6];
+	sprintf(tc, "%s/.meta.%s", dirname, basename.string().c_str());
 	std::ofstream metadata(tc, std::ios::binary);
 	metadata.write(reinterpret_cast<char*>(&ipu), sizeof(ipu));
 	metadata.close();
@@ -289,15 +289,15 @@ void tim2Unpack(std::vector<char>& buffer, const char* dirname, std::filesystem:
 			printf("-- Directory \"%s\" created\n", dirname);
 		}
 	}
-	char* tn = new char[strlen(dirname) + strlen(basename.c_str()) + 6];
-	sprintf(tn, "%s/%s.dds", dirname, basename.c_str());
+	char* tn = new char[strlen(dirname) + strlen(basename.string().c_str()) + 6];
+	sprintf(tn, "%s/%s.dds", dirname, basename.string().c_str());
 	printf("-- Writing texture to \"%s\"\n", tn);
 	std::ofstream dds(tn, std::ios::binary);
 	dds.write(texture, t2pic.imgSize);
 	dds.close();
 	delete [] tn;
-	char* tc = new char[f.tellg()];
-	sprintf(tc, "%s/.meta.%s", dirname, basename.c_str());
+	char* tc = new char[strlen(dirname) + strlen(basename.string().c_str()) + 8];
+	sprintf(tc, "%s/.meta.%s", dirname, basename.string().c_str());
 	std::ofstream metadata(tc, std::ios::binary);
 	f.seekg(0, std::ios::beg);
 	char* _r = new char[pos];
@@ -361,7 +361,7 @@ void momoUnpack(std::vector<char>& buffer, const char* dirname, std::filesystem:
 	char* tc = new char[strlen(dirname) + 12];
 	sprintf(tc, "%s/.metadata", dirname);
 	std::vector<std::string> metadataBuffer;
-	metadataBuffer.push_back(basename);
+	metadataBuffer.push_back(basename.string());
 	if(isc)
 		metadataBuffer.push_back("_compressed");
 	
@@ -395,7 +395,7 @@ void momoUnpack(std::vector<char>& buffer, const char* dirname, std::filesystem:
 		buff.clear();
 
 		std::filesystem::path _t = std::filesystem::absolute(ufn).filename();
-		metadataBuffer.push_back(_t);
+		metadataBuffer.push_back(_t.string());
 		delete [] ufn;
 	}
 	printf("-- Creating \"%s/.metadata\" file\n", dirname);
