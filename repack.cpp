@@ -16,6 +16,7 @@
 #define phere printf("here?\n")
 
 #define DBUFFER_SIZE 8 * 1024 * 1024 // 8 MiB for now
+#define _sep std::filesystem::path::preferred_separator
 
 enum
 {
@@ -253,7 +254,22 @@ void ipumUnpack(std::vector<char>& buffer, const char* dirname, std::filesystem:
 			printf("-- Directory \"%s\" created\n", dirname);
 		}
 	}
-	
+
+	char* _metan = new char[strlen(dirname) + 12];
+	sprintf(_metan, "%s/.metadata", dirname);
+	std::vector<std::string> _meta;
+	_meta.push_back(basename.string());
+	if(isc)
+		_meta.push_back("_compressed");
+	printf("-- Creating \"%s/.metadata\" file\n", dirname);
+	std::ofstream _metadata(_metan, std::ios::out);
+	for(const auto e : _meta)
+	{
+		_metadata << e << '\n';
+	}
+	delete [] _metan;
+	_metadata.close();
+
 	char* tc = new char[strlen(dirname) + strlen(basename.string().c_str()) + 6];
 	sprintf(tc, "%s/.meta.%s", dirname, basename.string().c_str());
 	std::ofstream metadata(tc, std::ios::binary);
@@ -323,6 +339,106 @@ struct Tim2PicHeader
 	uint32_t GsTexClut;
 };
 
+void tim2Pack(std::string dirname, std::string metadataFile, std::string origPath)
+{
+	std::ifstream meta(metadataFile);
+	std::string basename;
+	std::string _tmpc;
+	std::getline(meta, basename);
+	std::getline(meta, _tmpc);
+	meta.close();
+
+	bool isc = false;
+	if(_tmpc != "")
+		isc = true;
+
+	std::filesystem::path texFile = dirname;
+	texFile = texFile.append(basename + ".dds");
+	std::filesystem::path texMetaFile = dirname;
+	texMetaFile = texMetaFile.append(".meta." + basename);
+
+	std::vector<char> tim2;
+
+	std::ifstream _tim2(texMetaFile, std::ios::binary);
+	if(!_tim2.is_open())
+	{
+		printf("-\033[1;31mE\033[1;0m Cannot open \"%s\"\n", texMetaFile.string().c_str());
+		exit(-1);
+	}
+	Tim2Header t2header;
+	Tim2PicHeader t2pic;
+	_tim2.seekg(0, std::ios::end);
+	size_t ts = _tim2.tellg();
+	_tim2.seekg(0, std::ios::beg);
+	_tim2.read(reinterpret_cast<char*>(&t2header), sizeof(t2header));
+	std::vector<char> addData;
+	std::vector<char> addData2;
+	if(t2header.formatId != 0x0)
+	{
+		addData.resize(128 - _tim2.tellg());
+		_tim2.read(addData.data(), addData.size());
+		// _tim2.seekg(0x80, std::ios::beg);
+	}
+	_tim2.read(reinterpret_cast<char*>(&t2pic), sizeof(t2pic));
+	size_t s = _tim2.tellg();
+	if(ts > s)
+	{
+		addData2.resize(ts-s);
+		_tim2.read(addData2.data(), (ts - s));
+	}
+	size_t hS = _tim2.tellg();
+	_tim2.close();
+
+
+	std::ifstream _dds(texFile, std::ios::binary | std::ios::ate);
+	if(!_dds.is_open())
+	{
+		printf("-\033[1;31mE\033[1;0m Cannot open \"%s\"\n", texFile.string().c_str());
+		exit(-1);
+	}
+	size_t ddsSize = _dds.tellg();
+	_dds.seekg(0, std::ios::beg);
+
+	std::vector<char> ddsData(ddsSize);
+	_dds.read(ddsData.data(), ddsData.size());
+	t2pic.imgSize = ddsSize;
+	t2pic.totalSize = ddsSize + hS - t2pic.headerSize;
+
+	tim2.insert(tim2.end(), reinterpret_cast<char*>(&t2header), reinterpret_cast<char*>(&t2header) + sizeof(t2header));
+	if(t2header.formatId != 0x0)
+	{
+		tim2.insert(tim2.end(), addData.begin(), addData.end());
+	}
+	tim2.insert(tim2.end(), reinterpret_cast<char*>(&t2pic), reinterpret_cast<char*>(&t2pic) + sizeof(t2pic));
+	if(addData2.size() != 0)
+		tim2.insert(tim2.end(), addData2.begin(), addData2.end());
+	tim2.insert(tim2.end(), ddsData.begin(), ddsData.end());
+	_dds.close();
+
+	if(isc)
+	{
+		std::vector<char> out(tim2.size());
+		size_t csize = compress(reinterpret_cast<int16_t*>(tim2.data()), reinterpret_cast<int16_t*>(out.data()), tim2.size());
+		out.resize(csize);
+		tim2 = std::move(out);
+	}
+
+	std::string fn = origPath + ".bak";
+	if(!std::filesystem::exists(fn))
+	{
+		std::ifstream _fib(origPath, std::ios::binary);
+		std::ofstream _fob(fn, std::ios::binary);
+		_fob << _fib.rdbuf();
+		_fob.close();
+		_fib.close();
+	}
+	std::ofstream f(origPath, std::ios::binary);
+	f.write(tim2.data(), tim2.size());
+	f.close();
+	
+
+}
+
 void tim2Unpack(std::vector<char>& buffer, const char* dirname, std::filesystem::path basename, bool isc)
 {
 	// to pack TotalSize = sizeof(Tim2PicHeader) + imgSize;
@@ -339,6 +455,7 @@ void tim2Unpack(std::vector<char>& buffer, const char* dirname, std::filesystem:
 	char ddsMagic[4] = {'D', 'D', 'S', ' '};
 	char* texture = new char[t2pic.imgSize];
 	f.read(texture, t2pic.imgSize);
+
 	if(memcmp(texture, ddsMagic, 4) != 0)
 	{
 		printf("-E Supported only PC format of DMC2 textures\n");
@@ -358,6 +475,25 @@ void tim2Unpack(std::vector<char>& buffer, const char* dirname, std::filesystem:
 	dds.write(texture, t2pic.imgSize);
 	dds.close();
 	delete [] tn;
+
+
+	// for ex. item0.biz is compressed tim2, so... needed (also filename)
+	char* _metan = new char[strlen(dirname) + 12];
+	sprintf(_metan, "%s/.metadata", dirname);
+	std::vector<std::string> _meta;
+	_meta.push_back(basename.string());
+	if(isc)
+		_meta.push_back("_compressed");
+	printf("-- Creating \"%s/.metadata\" file\n", dirname);
+	std::ofstream _metadata(_metan, std::ios::out);
+	for(const auto e : _meta)
+	{
+		_metadata << e << '\n';
+	}
+	delete [] _metan;
+	_metadata.close();
+
+	// dump a header or data to texture point
 	char* tc = new char[strlen(dirname) + strlen(basename.string().c_str()) + 8];
 	sprintf(tc, "%s/.meta.%s", dirname, basename.string().c_str());
 	std::ofstream metadata(tc, std::ios::binary);
@@ -368,6 +504,11 @@ void tim2Unpack(std::vector<char>& buffer, const char* dirname, std::filesystem:
 	delete [] _r;
 	metadata.close();
 	delete [] tc;
+}
+
+void momoPack(std::string dirname, std::string metadataFile, std::string origPath)
+{
+
 }
 
 void momoUnpack(std::vector<char>& buffer, const char* dirname, std::filesystem::path basename, bool isc)
@@ -492,9 +633,53 @@ void momoUnpack(std::vector<char>& buffer, const char* dirname, std::filesystem:
 	metadata.close();
 }
 
+void pack(const char* dirname)
+{
+	if(!std::filesystem::is_directory(dirname))
+	{
+		printf("-\033[1;31mE\033[1;0m Directory not exists\n");
+		return;
+	}
+
+	std::filesystem::path _dname = std::filesystem::absolute(dirname);
+	_dname = std::filesystem::canonical(_dname);
+
+	std::filesystem::path _metadataFile = _dname;
+	_metadataFile = _metadataFile.append(".metadata");
+	if(!std::filesystem::exists(_metadataFile))
+	{
+		printf("-- Metadata file not exists\n");
+		return;
+	}
+	std::ifstream meta(_metadataFile.string());
+	std::string basename;
+	std::getline(meta, basename);
+	meta.close();
+	std::filesystem::path filePath = _dname.parent_path();
+	filePath = filePath.append(basename);
+
+	fileType ft = findFileType(filePath.string().c_str());
+	printf("-- Packing file \"%s\"\n", basename.c_str());
+	printf("-- File type: %s\n", fileTypeExt(ft));
+	switch (ft) {
+		case momo:
+			momoPack(_dname.string(), _metadataFile.string(), filePath.string());
+			break;
+		case ptx:
+			break;
+		case tim2:
+			tim2Pack(_dname.string(), _metadataFile.string(), filePath.string());
+			break;
+		case ipu:
+			break;
+		default:
+			return;
+	}
+}
+
 void unpack(const char* filename)
 {
-	if(!std::filesystem::exists(filename))
+	if(!std::filesystem::exists(filename) || std::filesystem::is_directory(filename))
 	{
 		printf("-- File not exists\n");
 		return;
@@ -551,12 +736,13 @@ void unpack(const char* filename)
 
 }
 
-void doSomethingWithFile(const char* filename)
+void doSomethingWithFile(const char* input, bool isP)
 {
-	if(met == UNPACK)
-		unpack(filename);
+	if(!isP)
+		unpack(input);
 	else
-		printf("Not implemented yet.\n");
+		pack(input);
+
 }
 
 int main(int argc, char** argv)
@@ -567,16 +753,14 @@ int main(int argc, char** argv)
 		return 0;
 	}
 
+	bool isPack = false;
+
 	if(argv[2])
 	{
 		if(strcmp(argv[2], "-p") == 0 || strcmp(argv[2], "--pack") == 0)
-		{
-			met = PACK;
-		}
+			isPack = true;
 		else if(strcmp(argv[2], "-e") == 0 || strcmp(argv[2], "--extract") == 0)
-		{
-			met = UNPACK;
-		}
+			isPack = false;
 		else
 		{
 			printUsageError(argv[0], argv[2]);
@@ -585,7 +769,7 @@ int main(int argc, char** argv)
 	}
 
 	printf("-- Input file: '%s'\n", argv[1]);
-	doSomethingWithFile(argv[1]);
+	doSomethingWithFile(argv[1], isPack);
 	return 1;
 }
 
