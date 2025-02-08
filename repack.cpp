@@ -35,6 +35,53 @@ struct miniBlock
 	uint32_t size;
 };
 
+size_t compress(int16_t* inputBuffer, int16_t* outputBuffer, size_t size) {
+    uint32_t bitBuffer = 0;
+    uint32_t bitMask = 0x8000;
+    int16_t* outPtr = outputBuffer;
+    int16_t* inPtr = inputBuffer;
+    int16_t* inEnd = inputBuffer + size / sizeof(int16_t);
+
+    int16_t* flagWordPtr = outPtr++;
+    *flagWordPtr = 0;
+
+    while (inPtr < inEnd) {
+        if (bitMask == 0) {
+            flagWordPtr = outPtr++;
+            *flagWordPtr = 0;
+            bitMask = 0x8000;
+        }
+
+        int16_t* searchPtr = inPtr - 1;
+        int16_t* searchEnd = (inPtr - 0x7ff) > inputBuffer ? (inPtr - 0x7ff) : inputBuffer;
+        int16_t* bestMatch = nullptr;
+        uint32_t bestLength = 0;
+
+        while (searchPtr >= searchEnd) {
+            uint32_t length = 0;
+            while (searchPtr[length] == inPtr[length] && (inPtr + length) < inEnd && length < 0xb) {
+                length++;
+            }
+            if (length > bestLength) {
+                bestLength = length;
+                bestMatch = searchPtr;
+            }
+            searchPtr--;
+        }
+
+        if (bestLength >= 2) {
+            uint32_t offset = inPtr - bestMatch;
+            *outPtr++ = (bestLength << 0xb) | offset;
+            inPtr += bestLength;
+            *flagWordPtr |= bitMask;
+        } else {
+            *outPtr++ = *inPtr++;
+        }
+        bitMask >>= 1;
+    }
+    return (outPtr - outputBuffer) * sizeof(int16_t);
+}
+
 size_t decompress(int16_t* inputBuffer, int16_t* outputBuffer, size_t size) {
 	uint32_t bitBuffer = 0;
 	uint32_t bitMask = 0;
@@ -318,6 +365,7 @@ void tim2Unpack(std::vector<char>& buffer, const char* dirname, std::filesystem:
 	char* _r = new char[pos];
 	f.read(_r, pos);
 	metadata.write(_r, pos);
+	delete [] _r;
 	metadata.close();
 	delete [] tc;
 }
