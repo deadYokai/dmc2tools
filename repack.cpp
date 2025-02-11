@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cassert>
 #include <cerrno>
 #include <cstdarg>
@@ -11,24 +12,13 @@
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
 #define phere printf("here?\n")
 
 #define DBUFFER_SIZE 8 * 1024 * 1024 // 8 MiB for now
-
-struct blockM
-{
-	uint64_t offset;
-	uint64_t size;
-};
-
-struct miniBlock
-{
-	uint32_t offset;
-	uint32_t size;
-};
 
 void printErr(const char* format, ...)
 {
@@ -40,51 +30,104 @@ void printErr(const char* format, ...)
 	va_end(args);
 }
 
-size_t compress(int16_t* inputBuffer, int16_t* outputBuffer, size_t size) {
-    uint32_t bitBuffer = 0;
-    uint32_t bitMask = 0x8000;
-    int16_t* outPtr = outputBuffer;
-    int16_t* inPtr = inputBuffer;
-    int16_t* inEnd = inputBuffer + size / sizeof(int16_t);
+void printHelp(const char* m)
+{
+	printf("Usage: %s <filename> [-e | -p]\n\t-e | --extract (default)\n\t-p | --pack\n\n", m);
+}
 
-    int16_t* flagWordPtr = outPtr++;
-    *flagWordPtr = 0;
+void printUsageError(const char* m, const char* arg)
+{
+	printErr("Unknown argument: \"%s\"", arg);
+	printHelp(m);
+}
 
-    while (inPtr < inEnd) {
-        if (bitMask == 0) {
-            flagWordPtr = outPtr++;
-            *flagWordPtr = 0;
-            bitMask = 0x8000;
-        }
+/*
+** ⠀⠀⠀⠀⢀⡴⠃⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⡼⠃⣀⠀⠀⣄⡀⠀⠀⠰⠆⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣿⣦⡀⠙⢷⣄⠀⠀⠀⠀⠀⢀⣀⣤⣴⣶⣾⣿⣿⣿⡿⠿⠷⢶⣾⣦⣐⠶⠤⠄⣀⣲⡀⠀⠀⠀⠀⠀⢻⡆⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+** ⠀⠀⠀⢀⡖⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣰⡇⠀⡟⠀⠀⠈⢷⡀⠀⠀⠘⠶⣦⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠸⣿⣛⢶⣄⡙⢷⣤⣤⣴⣿⣿⣿⣿⣿⣿⣿⡟⠉⠀⠀⠀⠀⠈⣷⡈⠻⣧⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⣿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+** ⠀⠀⣠⡟⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢿⣿⠇⢠⡇⠀⠀⠀⠈⣷⣄⠀⠀⠀⠘⢷⡀⠀⠀⠀⠀⠀⠀⠀⠀⠘⢻⡎⠛⢾⣿⣶⣿⣿⠟⠋⠙⠻⢿⡿⠿⠋⠀⠀⠀⠀⠀⠀⠀⣿⣷⣤⠈⠛⢧⣄⠀⠀⠀⠀⠀⠀⠀⠀⠘⢷⣄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+** ⠀⢠⡿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⣿⣷⣾⠃⠀⠀⠀⡀⢹⣿⣦⡀⠀⠀⠈⢻⣄⠀⠀⠀⠀⠀⠀⠀⠀⠀⢿⡄⢨⣿⡟⠉⠿⢿⣷⣤⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣿⢃⡿⠀⠀⠀⠉⠷⣄⠀⠀⠀⠀⠀⠀⠀⠀⠙⢷⣄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+** ⢠⡿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⡼⢰⠀⠀⠻⣿⡿⡆⠀⠀⠀⡇⠀⢿⡏⠻⣆⠀⠀⠀⠹⣦⠀⠀⠀⠀⠀⠀⠀⠀⠈⣷⡈⠉⢿⡀⠀⠀⠈⠉⠉⠃⠀⠀⠀⠀⠀⠀⠀⠀⢠⣿⠋⣾⠃⠀⠀⠀⠀⠀⠙⣧⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⢷⣶⣄⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+** ⣾⠃⠀⠀⠀⠀⠀⠀⠀⣶⡇⢸⡇⢸⡇⠀⠀⣻⣿⡖⠀⠀⢰⡇⠀⣸⣷⠀⠈⠳⣦⡀⠀⠈⢳⣄⠀⠀⠀⠀⠀⠀⠀⠘⢷⡀⠈⢷⣄⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣠⡴⠟⠁⣿⠃⠀⠀⠀⠀⠀⠀⠀⢸⡇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠛⢯⡙⠳⣦⣄⠀⠀⠀⠀⠀⠀⠀⠀⠀
+** ⡟⠀⠀⠀⠀⠀⠀⠀⠠⣿⡇⠀⠇⠸⠇⠀⠀⢸⣿⣷⠀⠀⡿⠀⠀⢸⣿⡄⠀⠀⠈⠻⣦⣄⡀⠙⢷⣄⠀⠀⠀⠀⠀⠀⠘⣧⠀⠀⠙⠿⣿⣷⣶⣦⣤⣶⠶⠚⠛⠛⠉⠀⣠⡾⠃⠀⠀⠀⠀⠀⠀⠀⠀⠀⣿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⣿⣽⣦⡀⠙⠛⢶⣤⡀⠀⠀⠀⠀⠀
+** ⠁⠀⠀⠀⠀⠀⠀⠀⠀⣿⡇⠀⠀⠁⠀⠀⠀⢸⡏⢻⣇⣼⠃⠀⠀⠸⣿⡇⠀⣀⣤⣶⣤⣽⡿⠶⣤⣙⣷⣀⠀⠀⠀⠀⠀⠸⣧⠀⠀⠀⠈⠛⠛⠛⠛⠃⠀⠀⠀⣀⣤⠾⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢻⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⢻⣿⣿⣦⡀⠀⠈⠙⠳⢦⡀⠀⠀
+** ⠀⠀⠀⠀⠀⠀⠀⠀⠀⣿⡇⠀⠀⠀⠀⠀⠀⢸⡇⠠⣿⣇⠀⠀⠀⠀⣿⣣⣶⣿⣿⡿⠛⠿⣄⠀⠀⠉⠛⠿⢶⣄⠀⠀⠀⠀⠙⣧⣀⣀⣀⣀⣀⣀⣀⣤⣤⠶⠞⠋⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠘⠻⣿⣿⣿⣦⣄⠀⠀⠀⠈⠒⠂
+** ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠻⣿⠀⠀⠀⠀⠀⠀⣸⡇⠰⢿⣿⡄⠀⢀⣴⣿⣿⣿⡿⠋⠀⠀⠀⠙⢷⡄⠀⠀⠀⠀⠉⣿⠶⣤⣄⡀⠈⣯⡉⠉⠉⠉⠉⠉⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣹⡃⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⣿⣿⣿⣿⣷⣄⠀⠀⠀⠀
+** ⠘⠀⠀⠀⠀⠀⠀⠀⠀⠀⢻⡀⠀⠀⠀⠀⠀⣾⡟⠁⠀⠻⣇⢰⣿⣿⣿⡿⠋⠀⠀⠀⠀⠀⠀⠈⣷⠀⠀⠀⠀⢰⡏⠀⠀⠈⠙⠛⠺⠷⣤⠀⠀⠀⢀⣄⣀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⣿⣄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣽⣿⣧⡝⠻⢦⣄⠀⠀
+** ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠘⣧⠀⠀⠀⠀⣠⣿⡇⠀⠀⠀⣿⣿⣿⣿⣿⠀⠀⠀⠀⠀⠀⠀⠀⢀⣿⡆⠀⠀⢀⡿⠀⠀⠀⠀⠀⠀⠀⠀⣀⣀⣀⣴⠟⠛⠋⠛⢷⣦⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣾⠇⠙⢷⡄⠀⠀⠀⠀⠀⠀⠀⠠⣤⡀⠀⠀⠈⠙⠻⣧⡄⠀⠉⠓⠀
+** ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢹⡇⠀⢀⣴⠏⢸⡇⠀⢀⣾⣿⣿⣿⡏⢻⠀⠀⠀⠀⠀⠀⠀⠀⣾⣿⡇⠀⢀⣾⠁⠀⠀⠀⠀⠀⢠⣶⠟⠿⠿⠋⠁⠀⠀⠀⠀⠘⣿⣷⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢠⡏⠀⠀⠀⠻⣦⡀⠀⠀⠀⠀⠀⠀⠘⢿⡄⠀⠀⠀⠀⠘⢿⣦⡀⠀⠀
+** ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢻⣴⠟⠁⠀⢈⣧⠀⣿⣿⣿⣿⡿⠀⣿⠀⠀⠀⠀⠀⠀⢀⣾⣿⣿⠇⠀⣾⠁⠀⠀⠀⠀⠀⣀⣼⠏⠀⠀⠀⠀⠀⠀⠀⠀⢀⣴⠟⠹⣷⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣼⠃⠀⠀⠀⠐⢹⣷⡴⠀⠀⠀⠀⠀⠀⠈⣿⡄⠀⠀⠀⠀⠈⠻⣍⠀⠀
+** ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢠⡴⠛⢧⡀⠀⠀⠈⣿⣿⣿⣿⣿⡿⠁⢠⡏⠀⠀⠀⠀⠀⣠⣾⣿⡿⠃⢀⣼⠃⠀⠀⢀⣾⣿⡿⠛⠉⠀⠀⠀⠀⠀⠀⠀⢀⣴⠟⠁⠀⢀⣼⠃⠀⠀⠀⠀⠀⠀⠀⠀⠀⣰⡏⠀⠀⠀⠀⠀⠀⠘⢻⣄⠀⠀⠀⠀⠀⠀⢼⣿⣄⠀⠀⠀⠀⠀⠙⣧⡀
+** ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠀⠀⠘⢷⡀⠀⣴⣿⣿⠛⠋⠁⠀⠀⠸⠇⠀⠀⠀⠀⣸⣿⠟⠉⠀⣠⠞⠁⠀⠀⠀⠸⣿⣿⡄⠀⠀⠀⠀⠀⢀⣀⣤⡾⠛⠁⠀⣴⠟⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢠⡿⠀⠀⠀⠀⠀⠀⠀⠀⠀⣹⣦⠀⠀⠀⠀⠀⠀⣿⣿⢷⣄⠀⠀⠀⠀⠈⠻
+** ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⢿⣄⣹⣿⣿⣷⠀⠀⠀⠀⠀⠀⠀⢀⣰⣿⠿⠋⠀⣠⡾⠋⠀⠀⠀⠀⠀⠀⢹⣟⣁⣤⡶⠶⠞⠛⠛⠉⠁⠀⠀⠀⢠⡇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢠⣿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠘⣷⡀⠀⠀⠀⠀⠀⢿⡄⠉⠀⠀⠀⠀⠀⠀
+** ⠀⠀⠀⠀⠀⠀⢰⡄⠀⠀⠀⠀⠀⠀⠀⠀⠙⣿⡁⢹⠈⢷⣀⠀⣀⣀⣤⡶⠟⠋⠁⢀⣤⠾⠋⠀⠀⠀⠀⠀⠀⠀⠀⣾⣿⠟⠁⠀⠀⠀⠀⠀⠀⠀⠀⢀⣠⡾⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢠⡿⠙⠀⠀⢀⡀⠀⠀⠀⠀⠀⠀⠀⠀⠈⢷⡀⠀⠀⠀⠀⠸⣇⠀⠀⠀⠀⠀⠀⠀
+** ⠀⠀⠀⠀⠀⠀⠀⢿⡀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠻⣾⣇⠈⢿⣿⠟⠛⠁⠀⣠⣤⠾⠋⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢻⣷⠀⠀⠀⠀⠀⠀⢀⣠⠶⠛⠛⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣀⣤⡿⠷⠚⠛⠛⠛⠻⢷⣴⡀⠀⠀⠀⠀⠀⠀⠈⢻⡄⠀⠀⠀⠀⣿⠚⠛⠉⠀⠀⠀⠀
+** ⠀⠀⠀⠀⠀⠀⠀⠘⣧⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠛⠀⠀⠻⣆⠶⠞⠛⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠛⠶⠶⠶⢿⣤⠴⠟⠁⠀⠀⠀⠀⠀⠀⠀⠀⢀⣠⡴⠖⠛⠋⠁⠀⠀⠀⠀⠀⠀⠀⠀⠈⠻⣶⡖⠀⢶⣦⠀⢀⣠⣴⠿⣆⠀⠀⠀⢿⡀⠀⠀⠀⠀⠀⠀
+** ⠀⠀⠀⠀⠀⠀⠠⣤⡸⣦⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠹⣆⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣴⣾⢟⡁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⢿⣷⡿⠳⠾⠛⠉⠀⠀⠹⣆⠀⠀⢸⡇⠀⠀⠀⠀⠀⠀
+** ⠀⠀⠀⠀⠀⠀⠀⠈⠙⢿⡆⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠘⢧⣄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣴⠟⠁⠁⠈⠻⣦⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠋⠀⠀⠀⠀⠀⠀⠀⠀⢻⡄⠀⠈⡇⠀⠀⠀⠀⠀⠀
+** ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⢻⡄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠘⢿⣦⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣰⡿⠁⠀⠀⠀⠀⠀⠈⠻⣦⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣿⡀⠀⡇⠀⠀⠀⠀⠀⠀
+** ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⢷⡀⠀⠀⠀⠀⠀⠀⠀⢰⠀⠀⠀⠀⠀⠀⠀⢽⣧⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣴⠏⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⠢⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢠⣿⢷⠀⡇⠀⠀⠀⠀⠀⠀
+** ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⢧⠀⠀⠀⠀⠀⠀⠀⠈⠃⠀⠀⠀⠀⠀⠀⠀⠘⢷⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣠⣾⠃⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⡀⠓⢀⣀⠀⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣼⠃⠘⣷⡇⠀⠀⠀⠀⠀⠀
+**
+**
+**  SOME BLACK MAGIC HAPPENING HERE ** 
+**************************************/
+size_t compress(const std::vector<char>& inputBuffer, std::vector<char>& outputBuffer)
+{
+	uint32_t bitBuffer = 0;
+	uint32_t bitMask = 0x8000;
+	size_t size = inputBuffer.size();
 
-        int16_t* searchPtr = inPtr - 1;
-        int16_t* searchEnd = (inPtr - 0x7ff) > inputBuffer ? (inPtr - 0x7ff) : inputBuffer;
-        int16_t* bestMatch = nullptr;
-        uint32_t bestLength = 0;
+	outputBuffer.clear();
+	outputBuffer.resize(size * 2); // Allocate enough space initially
 
-        while (searchPtr >= searchEnd) {
-            uint32_t length = 0;
-            while (searchPtr[length] == inPtr[length] && (inPtr + length) < inEnd && length < 0xb) {
-                length++;
-            }
-            if (length > bestLength) {
-                bestLength = length;
-                bestMatch = searchPtr;
-            }
-            searchPtr--;
-        }
+	int16_t* outPtr = reinterpret_cast<int16_t*>(outputBuffer.data());
+	const int16_t* inPtr = reinterpret_cast<const int16_t*>(inputBuffer.data());
+	const int16_t* inEnd = reinterpret_cast<const int16_t*>(inputBuffer.data() + size);
 
-        if (bestLength >= 2) {
-            uint32_t offset = inPtr - bestMatch;
-            *outPtr++ = (bestLength << 0xb) | offset;
-            inPtr += bestLength;
-            *flagWordPtr |= bitMask;
-        } else {
-            *outPtr++ = *inPtr++;
-        }
-        bitMask >>= 1;
-    }
-    return (outPtr - outputBuffer) * sizeof(int16_t);
+	int16_t* flagWordPtr = outPtr++;
+	*flagWordPtr = 0;
+
+	while (inPtr < inEnd) {
+		if (bitMask == 0) {
+			flagWordPtr = outPtr++;
+			*flagWordPtr = 0;
+			bitMask = 0x8000;
+		}
+
+		const int16_t* searchPtr = inPtr - 1;
+		const int16_t* searchEnd = (inPtr - 0x7ff) > reinterpret_cast<const int16_t*>(inputBuffer.data())
+			? (inPtr - 0x7ff)
+			: reinterpret_cast<const int16_t*>(inputBuffer.data());
+
+		const int16_t* bestMatch = nullptr;
+		uint32_t bestLength = 0;
+
+		while (searchPtr >= searchEnd) {
+			uint32_t length = 0;
+			while (searchPtr[length] == inPtr[length] && (inPtr + length) < inEnd && length < 11) {
+				length++;
+			}
+			if (length > bestLength) {
+				bestLength = length;
+				bestMatch = searchPtr;
+			}
+			searchPtr--;
+		}
+
+		if (bestLength >= 2) {
+			uint32_t offset = inPtr - bestMatch;
+			*outPtr++ = (bestLength << 11) | offset;
+			inPtr += bestLength;
+			*flagWordPtr |= bitMask;
+		} else {
+			*outPtr++ = *inPtr++;
+		}
+		bitMask >>= 1;
+	}
+
+	size_t outputSize = reinterpret_cast<char*>(outPtr) - outputBuffer.data();
+	outputBuffer.resize(outputSize); // Shrink to actual used size
+	return outputSize;
 }
 
 size_t decompress(int16_t* inputBuffer, int16_t* outputBuffer, size_t size) {
@@ -112,7 +155,7 @@ size_t decompress(int16_t* inputBuffer, int16_t* outputBuffer, size_t size) {
 			uint16_t controlWord = *inpPtr;
 			inpPtr++;
 			uint32_t offset = controlWord & 0x7FF;
-			uint32_t length = controlWord >> 11;
+			uint32_t length = controlWord >> 11;  // 0xB
 
 			if (length == 0) {
 				if (inpPtr >= inpEnd) break;
@@ -145,6 +188,8 @@ enum fileType
 	tim2,
 	ptx, // where offset is 2048 (0x800)
 	ipu,
+	icon_sys, // aka icon.sys file
+	ps2icn,	  // ps2 icon
 	momo
 };
 
@@ -155,6 +200,8 @@ const char* fileTypeExt(fileType ft)
 		case tim2: return "tm2";
 		case ptx: return "ptx";
 		case ipu: return "ipu";
+		case icon_sys: return "icon.sys";
+		case ps2icn: return "icn";
 		default: return "unk";
 	}
 }
@@ -165,6 +212,7 @@ fileType findFileType(std::vector<char>& f, size_t fsize)
 	char momoHeader[4] = {'M', 'O', 'M', 'O'};
 	char tim2Header[4] = {'T', 'I', 'M', '2'};
 	char ipumHeader[4] = {'i', 'p', 'u', 'm'};
+	char ps2dHeader[4] = {'P', 'S', '2', 'D'};
 
 	if((magic[2] == momoHeader[0] && magic[3] == momoHeader[1] && magic[0] != momoHeader[0]) || (magic[2] == tim2Header[0] && magic[3] == tim2Header[1]))
 	{
@@ -187,6 +235,10 @@ fileType findFileType(std::vector<char>& f, size_t fsize)
 		return tim2;
 	else if(memcmp(magic, ipumHeader, 4) == 0)
 		return ipu;
+	else if(memcmp(magic, ps2dHeader, 4) == 0)
+		return icon_sys;
+	else if(memcmp(magic, "\x00\x00\x01\x00", 4) == 0)
+		return ps2icn;
 	else{
 		if(fsize > (2048 + 512)){ // offset + some data stuff
 			char lm[4] = {f[2048], f[2049], f[2050], f[2051]};
@@ -220,17 +272,6 @@ fileType findFileType(const char* path)
 	f.read(buff.data(), buff.size());
 	f.close();
 	return findFileType(buff, fsize);
-}
-
-void printHelp(const char* m)
-{
-	printf("Usage: %s <filename> [-e | -p]\n\t-e | --extract (default)\n\t-p | --pack\n\n", m);
-}
-
-void printUsageError(const char* m, const char* arg)
-{
-	printErr("Unknown argument: \"%s\"", arg);
-	printHelp(m);
 }
 
 struct ipumHeader
@@ -419,10 +460,11 @@ void tim2Pack(std::string dirname, std::string metadataFile, std::string origPat
 
 	if(isc)
 	{
-		std::vector<char> out(tim2.size());
-		size_t csize = compress(reinterpret_cast<int16_t*>(tim2.data()), reinterpret_cast<int16_t*>(out.data()), tim2.size());
-		out.resize(csize);
-		tim2 = std::move(out);
+		// std::vector<char> out(tim2.size());
+		// size_t csize = compress(reinterpret_cast<uint16_t*>(tim2.data()), reinterpret_cast<uint16_t*>(out.data()), tim2.size());
+		// out.resize(csize);
+		//
+		// tim2 = std::move(out);
 	}
 
 	std::string fn = origPath + ".bak";
@@ -508,6 +550,18 @@ void tim2Unpack(std::vector<char>& buffer, const char* dirname, std::filesystem:
 	delete [] tc;
 }
 
+struct blockM
+{
+	uint64_t offset;
+	uint64_t size;
+};
+
+struct miniBlock
+{
+	uint32_t offset;
+	uint32_t size;
+};
+
 void momoPack(std::string dirname, std::string metadataFile, std::string origPath)
 {
 	bool mb = false;
@@ -515,6 +569,11 @@ void momoPack(std::string dirname, std::string metadataFile, std::string origPat
 	char c;
 	_m.seekg(sizeof(uint32_t));
 	_m.read(&c, 1);
+	if(c == 'M' || c == 'O')
+	{
+		_m.seekg(sizeof(uint32_t) + 2);
+		_m.read(&c, 1);
+	}
 	if(c != 0x0)
 		mb = true;
 	_m.close();
@@ -592,12 +651,17 @@ void momoPack(std::string dirname, std::string metadataFile, std::string origPat
 	std::vector<char> buff;
 	std::string _buff = f.str();
 	buff.insert(buff.end(), _buff.begin(), _buff.end());
+	std::ofstream __f(origPath + ".bin", std::ios::binary);
+	__f.write(buff.data(), buff.size());
+	__f.close();
 	if(isc)
 	{
 		printf("-- Compressing file\n");
-		std::vector<char> out(buff.size());
-		size_t csize = compress(reinterpret_cast<int16_t*>(buff.data()), reinterpret_cast<int16_t*>(out.data()), buff.size());
+		size_t _size = buff.size();
+		std::vector<char> out(DBUFFER_SIZE);
+		size_t csize = compress(buff, out);
 		out.resize(csize);
+
 		buff = std::move(out);
 	}
 	std::ofstream _f(origPath, std::ios::binary);
@@ -665,7 +729,7 @@ void momoUnpack(std::vector<char>& buffer, const char* dirname, std::filesystem:
 	
 	for(size_t i = 0; i < bsize; i++)
 	{
-		uint64_t o, s;
+		size_t o, s;
 		if(!mb){
 			o = blocks[i].offset;
 			s = blocks[i].size;
@@ -709,7 +773,7 @@ void momoUnpack(std::vector<char>& buffer, const char* dirname, std::filesystem:
 				ipumUnpack(buff, dn.string().c_str(), bn, false);
 				break;
 			default:
-				return;
+				break;
 		}
 		buff.clear();
 
