@@ -1,4 +1,3 @@
-#include <algorithm>
 #include <cassert>
 #include <cerrno>
 #include <cstdarg>
@@ -12,7 +11,6 @@
 #include <iostream>
 #include <sstream>
 #include <string>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -40,6 +38,9 @@ void printUsageError(const char* m, const char* arg)
 	printErr("Unknown argument: \"%s\"", arg);
 	printHelp(m);
 }
+
+// TODO: set bytes aligment in packing (maybe 2048)
+
 
 /*
 ** ⠀⠀⠀⠀⢀⡴⠃⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⡼⠃⣀⠀⠀⣄⡀⠀⠀⠰⠆⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣿⣦⡀⠙⢷⣄⠀⠀⠀⠀⠀⢀⣀⣤⣴⣶⣾⣿⣿⣿⡿⠿⠷⢶⣾⣦⣐⠶⠤⠄⣀⣲⡀⠀⠀⠀⠀⠀⢻⡆⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
@@ -75,16 +76,19 @@ size_t compress(const std::vector<char>& inputBuffer, std::vector<char>& outputB
 {
 	uint32_t bitBuffer = 0;
 	uint32_t bitMask = 0x8000;
-	size_t size = inputBuffer.size();
+	int searchWindow = 511;
+	size_t size = inputBuffer.size() / sizeof(uint16_t);
+	const uint16_t* inp = reinterpret_cast<const uint16_t*>(inputBuffer.data());
 
 	outputBuffer.clear();
-	outputBuffer.resize(size * 2); // Allocate enough space initially
+	outputBuffer.resize(size * 2);
 
-	int16_t* outPtr = reinterpret_cast<int16_t*>(outputBuffer.data());
-	const int16_t* inPtr = reinterpret_cast<const int16_t*>(inputBuffer.data());
-	const int16_t* inEnd = reinterpret_cast<const int16_t*>(inputBuffer.data() + size);
+	uint16_t* outPtr = reinterpret_cast<uint16_t*>(outputBuffer.data());
 
-	int16_t* flagWordPtr = outPtr++;
+	const uint16_t* inPtr = inp;
+	const uint16_t* inEnd = inp + size;
+
+	uint16_t* flagWordPtr = outPtr++;
 	*flagWordPtr = 0;
 
 	while (inPtr < inEnd) {
@@ -94,13 +98,11 @@ size_t compress(const std::vector<char>& inputBuffer, std::vector<char>& outputB
 			bitMask = 0x8000;
 		}
 
-		const int16_t* searchPtr = inPtr - 1;
-		const int16_t* searchEnd = (inPtr - 0x7ff) > reinterpret_cast<const int16_t*>(inputBuffer.data())
-			? (inPtr - 0x7ff)
-			: reinterpret_cast<const int16_t*>(inputBuffer.data());
+		const uint16_t* searchEnd = (inPtr - searchWindow) > inp ? (inPtr - searchWindow) : inp;
 
-		const int16_t* bestMatch = nullptr;
+		const uint16_t* bestMatch = nullptr;
 		uint32_t bestLength = 0;
+		const uint16_t* searchPtr = inPtr - 1;
 
 		while (searchPtr >= searchEnd) {
 			uint32_t length = 0;
@@ -125,8 +127,12 @@ size_t compress(const std::vector<char>& inputBuffer, std::vector<char>& outputB
 		bitMask >>= 1;
 	}
 
-	size_t outputSize = reinterpret_cast<char*>(outPtr) - outputBuffer.data();
-	outputBuffer.resize(outputSize); // Shrink to actual used size
+	if (bitMask != 0x8000) {
+		*flagWordPtr |= bitMask;
+	}
+
+	size_t outputSize = (reinterpret_cast<char*>(outPtr) - outputBuffer.data());
+	outputBuffer.resize(outputSize);
 	return outputSize;
 }
 
@@ -460,11 +466,11 @@ void tim2Pack(std::string dirname, std::string metadataFile, std::string origPat
 
 	if(isc)
 	{
-		// std::vector<char> out(tim2.size());
-		// size_t csize = compress(reinterpret_cast<uint16_t*>(tim2.data()), reinterpret_cast<uint16_t*>(out.data()), tim2.size());
-		// out.resize(csize);
-		//
-		// tim2 = std::move(out);
+		std::vector<char> out(tim2.size());
+		size_t csize = compress(tim2, out);
+		out.resize(csize);
+
+		tim2 = std::move(out);
 	}
 
 	std::string fn = origPath + ".bak";
@@ -475,6 +481,13 @@ void tim2Pack(std::string dirname, std::string metadataFile, std::string origPat
 		_fob << _fib.rdbuf();
 		_fob.close();
 		_fib.close();
+	}
+
+	if(tim2.size() % 2048 != 0)
+	{
+		size_t old = tim2.size();
+		size_t newsize = (old + 2047) & ~2047;
+		tim2.resize(newsize);
 	}
 	std::ofstream f(origPath, std::ios::binary);
 	f.write(tim2.data(), tim2.size());
