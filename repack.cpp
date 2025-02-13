@@ -76,7 +76,7 @@ size_t compress(const std::vector<char>& inputBuffer, std::vector<char>& outputB
 {
 	uint32_t bitBuffer = 0;
 	uint32_t bitMask = 0x8000;
-	int searchWindow = 511;
+	int searchWindow = 2047;
 	size_t size = inputBuffer.size() / sizeof(uint16_t);
 	const uint16_t* inp = reinterpret_cast<const uint16_t*>(inputBuffer.data());
 
