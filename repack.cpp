@@ -39,8 +39,7 @@ void printUsageError(const char* m, const char* arg)
 	printHelp(m);
 }
 
-// TODO: set bytes aligment in packing (maybe 2048)
-
+void pack(const char*);
 
 /*
 ** ⠀⠀⠀⠀⢀⡴⠃⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⡼⠃⣀⠀⠀⣄⡀⠀⠀⠰⠆⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣿⣦⡀⠙⢷⣄⠀⠀⠀⠀⠀⢀⣀⣤⣴⣶⣾⣿⣿⣿⡿⠿⠷⢶⣾⣦⣐⠶⠤⠄⣀⣲⡀⠀⠀⠀⠀⠀⢻⡆⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
@@ -72,6 +71,7 @@ void printUsageError(const char* m, const char* arg)
 **
 **  SOME BLACK MAGIC HAPPENING HERE ** 
 **************************************/
+
 size_t compress(const std::vector<char>& inputBuffer, std::vector<char>& outputBuffer)
 {
 	uint32_t bitBuffer = 0;
@@ -498,7 +498,6 @@ void tim2Pack(std::string dirname, std::string metadataFile, std::string origPat
 
 void tim2Unpack(std::vector<char>& buffer, const char* dirname, std::filesystem::path basename, bool isc)
 {
-	// to pack TotalSize = sizeof(Tim2PicHeader) + imgSize;
 	std::istringstream f(std::string(buffer.begin(), buffer.end()), std::ios::binary);
 	f.seekg(0, std::ios::beg);
 	Tim2Header t2header;
@@ -606,6 +605,10 @@ void momoPack(std::string dirname, std::string metadataFile, std::string origPat
 			continue;
 		}
 		if(line == "") break;
+		std::filesystem::path p = _tp;
+		p.append("_" + line);
+		if(std::filesystem::is_directory(p))
+			pack(p.c_str());
 		_tp = _tp.append(line);
 		files.push_back(_tp.string());
 		_tp = dirname;
@@ -643,8 +646,24 @@ void momoPack(std::string dirname, std::string metadataFile, std::string origPat
 	f.write(_tmp, (bcount*2) * files.size());
 	delete [] _tmp;
 	lastpos = f.tellp();
+	if(lastpos % 64 != 0)
+	{
+		size_t old = lastpos;
+		size_t newpos = (old + 63) & ~63;
+		std::string _tmpBuff(newpos - lastpos, '\0');
+		f.write(_tmpBuff.data(), _tmpBuff.size());
+		lastpos = newpos;
+	}	
 	for(size_t i = 0; i < files.size(); i++)
 	{
+		if(lastpos % 1024 != 0)
+		{
+			size_t old = lastpos;
+			size_t newpos = (old + 1023) & ~1023;
+			std::string _tmpBuff(newpos - lastpos, '\0');
+			f.write(_tmpBuff.data(), _tmpBuff.size());
+			lastpos = newpos;
+		}	
 		printf("-- Writing \"%s\"\n", files[i].c_str());
 		std::ifstream _t(files[i], std::ios::binary | std::ios::ate);
 		lastoff = lastpos;
@@ -660,7 +679,15 @@ void momoPack(std::string dirname, std::string metadataFile, std::string origPat
 		f.seekp(lastpos);
 		_t.close();
 	}
-	
+	lastpos = f.tellp();
+	if(lastpos % 64 != 0)
+	{
+		size_t old = lastpos;
+		size_t newpos = (old + 63) & ~63;
+		std::string _tmpBuff(newpos - lastpos, '\0');
+		f.write(_tmpBuff.data(), _tmpBuff.size());
+		lastpos = newpos;
+	}	
 	std::vector<char> buff;
 	std::string _buff = f.str();
 	buff.insert(buff.end(), _buff.begin(), _buff.end());
@@ -671,7 +698,7 @@ void momoPack(std::string dirname, std::string metadataFile, std::string origPat
 	{
 		printf("-- Compressing file\n");
 		size_t _size = buff.size();
-		std::vector<char> out(DBUFFER_SIZE);
+		std::vector<char> out(_size / 2);
 		size_t csize = compress(buff, out);
 		out.resize(csize);
 
