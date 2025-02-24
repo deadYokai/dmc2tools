@@ -357,12 +357,6 @@ void ipumUnpack(std::vector<char>& buffer, const char* dirname, std::filesystem:
 	}
 
 }
-
-void ptxUnpack(std::vector<char>& buffer, const char* dirname, std::filesystem::path basename, bool isc)
-{
-
-}
-
 struct Tim2Header
 {
 	char magic[4];
@@ -601,6 +595,85 @@ void tim2Unpack(std::vector<char>& buffer, const char* dirname, std::filesystem:
 	metadata.close();
 	delete [] tc;
 }
+
+void ptxPack(std::string dirname, std::string metadataFile, std::string origPath)
+{
+	
+}
+
+void ptxUnpack(std::vector<char>& buffer, const char* dirname, std::filesystem::path basename, bool isc)
+{
+	std::istringstream f(std::string(buffer.begin(), buffer.end()), std::ios::binary);
+	f.seekg(0, std::ios::beg);
+	uint32_t count;
+	f.read(reinterpret_cast<char*>(&count), sizeof(uint32_t));
+	std::vector<uint32_t> align; // tim2 size / 2048
+	for(size_t i = 0; i < count; i++)
+	{
+		uint32_t _tu;
+		f.read(reinterpret_cast<char*>(&_tu), sizeof(uint32_t));
+		align.push_back(_tu);
+	}
+	f.seekg(0x800, std::ios::beg);	
+	if(!std::filesystem::is_directory(dirname))
+	{
+		if(std::filesystem::create_directory(dirname))
+		{
+			printf("-- Directory \"%s\" created\n", dirname);
+		}
+	}
+
+	char* tc = new char[strlen(dirname) + 12];
+	sprintf(tc, "%s/.metadata", dirname);
+	std::vector<std::string> metadataBuffer;
+	metadataBuffer.push_back(basename.string());
+	if(isc)
+		metadataBuffer.push_back("_compressed");
+
+	for(size_t i = 0; i < count; i++)
+	{
+		size_t s = align[i] * 2048;
+		char* ufn = new char[6 + strlen(dirname) + 1 + 3];
+		std::vector<char> buff(s);
+		// f.seekg(o, std::ios::beg);
+		f.read(buff.data(), buff.size());
+
+		fileType ft = findFileType(buff, buff.size());
+
+		sprintf(ufn, "%s/id%lu.%s", dirname, i, fileTypeExt(ft));
+		printf("-- Writing to \"%s\", size: %lu\n", ufn, s);
+
+		std::ofstream uf(ufn, std::ios::binary);
+		uf.write(buff.data(), s);
+		uf.close();
+
+		std::filesystem::path ap = std::filesystem::absolute(ufn);
+		std::filesystem::path bn = ap.filename();
+		std::filesystem::path dn = ap.parent_path() / ("_" + bn.string());
+		
+		switch (ft) {
+			case tim2:
+				tim2Unpack(buff, dn.string().c_str(), bn, false);
+				break;
+			default:
+				break;
+		}
+		buff.clear();
+
+		std::filesystem::path _t = std::filesystem::absolute(ufn).filename();
+		metadataBuffer.push_back(_t.string());
+		delete [] ufn;
+	}
+	printf("-- Creating \"%s/.metadata\" file\n", dirname);
+	std::ofstream metadata(tc, std::ios::out);
+	for(const auto e : metadataBuffer)
+	{
+		metadata << e << '\n';
+	}
+	delete [] tc;
+	metadata.close();
+}
+
 
 struct blockM
 {
