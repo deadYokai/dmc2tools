@@ -1,5 +1,6 @@
 #include <cassert>
 #include <cerrno>
+#include <cmath>
 #include <cstdarg>
 #include <cstdint>
 #include <cstdio>
@@ -13,8 +14,6 @@
 #include <string>
 #include <utility>
 #include <vector>
-
-#define phere printf("here?\n")
 
 #define DBUFFER_SIZE 8 * 1024 * 1024 // 8 MiB for now
 
@@ -81,7 +80,7 @@ size_t compress(const std::vector<char>& inputBuffer, std::vector<char>& outputB
 	const uint16_t* inp = reinterpret_cast<const uint16_t*>(inputBuffer.data());
 
 	outputBuffer.clear();
-	outputBuffer.resize(size * 2);
+	outputBuffer.resize(size * 2 + 2048);
 
 	uint16_t* outPtr = reinterpret_cast<uint16_t*>(outputBuffer.data());
 
@@ -132,8 +131,13 @@ size_t compress(const std::vector<char>& inputBuffer, std::vector<char>& outputB
 	}
 
 	size_t outputSize = (reinterpret_cast<char*>(outPtr) - outputBuffer.data());
-	outputBuffer.resize(outputSize);
-	return outputSize;
+
+	size_t align = (outputSize / 2048) * 2048;
+	if(align == 0 || align < outputSize)
+		align += 2048;
+
+	outputBuffer.resize(align);
+	return align;
 }
 
 size_t decompress(int16_t* inputBuffer, int16_t* outputBuffer, size_t size) {
@@ -365,7 +369,26 @@ struct Tim2Header
 	char formatVer;
 	char formatId;
 	uint16_t count;
-	char pad[8];
+	// char pad[8];
+	// Maybe:
+	uint32_t texOff;
+	uint32_t texSize;
+	//
+};
+
+struct GsTex {
+	unsigned long TBP0 : 14;
+	unsigned long TBW : 6;
+	unsigned long PSM : 6;
+	unsigned long TW : 4;
+	unsigned long TH : 4;
+	unsigned long TCC : 1;
+	unsigned long TFX : 2;
+	unsigned long CBP : 14;
+	unsigned long CPSM : 4;
+	unsigned long CSM : 1;
+	unsigned long CSA : 5;
+	unsigned long CLD : 3;
 };
 
 struct Tim2PicHeader
@@ -382,8 +405,8 @@ struct Tim2PicHeader
 	uint16_t ImageWidth;
 	uint16_t ImageHeight;
 
-	uint64_t GsTex0;
-	uint64_t GsTex1;
+	GsTex GsTex0;
+	GsTex GsTex1;
 	uint32_t GsTexaFbaPabe;
 	uint32_t GsTexClut;
 };
@@ -426,7 +449,6 @@ void tim2Pack(std::string dirname, std::string metadataFile, std::string origPat
 	{
 		addData.resize(128 - _tim2.tellg());
 		_tim2.read(addData.data(), addData.size());
-		// _tim2.seekg(0x80, std::ios::beg);
 	}
 	_tim2.read(reinterpret_cast<char*>(&t2pic), sizeof(t2pic));
 	size_t s = _tim2.tellg();
@@ -446,12 +468,30 @@ void tim2Pack(std::string dirname, std::string metadataFile, std::string origPat
 		exit(-1);
 	}
 	size_t ddsSize = _dds.tellg();
+
+	_dds.seekg(12, std::ios::beg);
+	uint32_t w, h;
+	_dds.read(reinterpret_cast<char*>(&w), sizeof(uint32_t));
+	_dds.read(reinterpret_cast<char*>(&h), sizeof(uint32_t));
 	_dds.seekg(0, std::ios::beg);
 
 	std::vector<char> ddsData(ddsSize);
 	_dds.read(ddsData.data(), ddsData.size());
+
+	/// :( don't works....
+	// GsTex tex = t2pic.GsTex0;
+	// t2header.texSize = ddsSize;
+	// t2pic.ImageWidth = w;
+	// t2pic.ImageHeight = h;
+	//
+	// tex.TW = log2(w);
+	// tex.TH = log2(h);
+	//
+	// t2pic.GsTex0 = tex;
+
 	t2pic.imgSize = ddsSize;
 	t2pic.totalSize = ddsSize + hS - t2pic.headerSize;
+
 
 	tim2.insert(tim2.end(), reinterpret_cast<char*>(&t2header), reinterpret_cast<char*>(&t2header) + sizeof(t2header));
 	if(t2header.formatId != 0x0)
@@ -656,14 +696,7 @@ void momoPack(std::string dirname, std::string metadataFile, std::string origPat
 	}	
 	for(size_t i = 0; i < files.size(); i++)
 	{
-		if(lastpos % 1024 != 0)
-		{
-			size_t old = lastpos;
-			size_t newpos = (old + 1023) & ~1023;
-			std::string _tmpBuff(newpos - lastpos, '\0');
-			f.write(_tmpBuff.data(), _tmpBuff.size());
-			lastpos = newpos;
-		}	
+		
 		printf("-- Writing \"%s\"\n", files[i].c_str());
 		std::ifstream _t(files[i], std::ios::binary | std::ios::ate);
 		lastoff = lastpos;
@@ -673,6 +706,14 @@ void momoPack(std::string dirname, std::string metadataFile, std::string origPat
 		printf("   Offset: %lu\n", lastoff);
 		f << _t.rdbuf();
 		lastpos = f.tellp();
+		if(lastpos % 64 != 0)
+		{
+			size_t old = lastpos;
+			size_t newpos = (old + 63) & ~63;
+			std::string _tmpBuff(newpos - lastpos, '\0');
+			f.write(_tmpBuff.data(), _tmpBuff.size());
+			lastpos = newpos;
+		}
 		f.seekp((bcount*2) + (bcount * 2) * i);
 		f.write(reinterpret_cast<char*>(&lastoff), bcount);
 		f.write(reinterpret_cast<char*>(&fsize), bcount);
@@ -680,14 +721,14 @@ void momoPack(std::string dirname, std::string metadataFile, std::string origPat
 		_t.close();
 	}
 	lastpos = f.tellp();
-	if(lastpos % 64 != 0)
-	{
-		size_t old = lastpos;
-		size_t newpos = (old + 63) & ~63;
-		std::string _tmpBuff(newpos - lastpos, '\0');
-		f.write(_tmpBuff.data(), _tmpBuff.size());
-		lastpos = newpos;
-	}	
+	// if(lastpos % 64 != 0)
+	// {
+	// 	size_t old = lastpos;
+	// 	size_t newpos = (old + 63) & ~63;
+	// 	std::string _tmpBuff(newpos - lastpos, '\0');
+	// 	f.write(_tmpBuff.data(), _tmpBuff.size());
+	// 	lastpos = newpos;
+	// }	
 	std::vector<char> buff;
 	std::string _buff = f.str();
 	buff.insert(buff.end(), _buff.begin(), _buff.end());
