@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <fstream>
 #include <ios>
+#include <iosfwd>
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -598,7 +599,88 @@ void tim2Unpack(std::vector<char>& buffer, const char* dirname, std::filesystem:
 
 void ptxPack(std::string dirname, std::string metadataFile, std::string origPath)
 {
-	
+	bool isc = false;
+	std::string basename, line;
+	std::filesystem::path _tp = dirname;
+	std::vector<std::string> files;
+
+	std::ifstream meta(metadataFile);
+	std::getline(meta, basename);
+
+	while(std::getline(meta, line))
+	{
+		if(line.find("_compressed") != std::string::npos)
+		{
+			isc = true;
+			continue;
+		}
+		if(line == "") break;
+		std::filesystem::path p = _tp;
+		p.append("_" + line);
+		if(std::filesystem::is_directory(p))
+			pack(p.c_str());
+		_tp = _tp.append(line);
+		files.push_back(_tp.string());
+		_tp = dirname;
+
+	}
+	meta.close();
+
+	std::string fn = origPath + ".bak";
+	if(!std::filesystem::exists(fn))
+	{
+		std::ifstream _fib(origPath, std::ios::binary);
+		std::ofstream _fob(fn, std::ios::binary);
+		_fob << _fib.rdbuf();
+		_fob.close();
+		_fib.close();
+	}
+
+	std::ostringstream f(std::ios::binary);
+
+	std::vector<char> zeros(0x800, 0);
+	f.write(zeros.data(), zeros.size());
+
+	f.seekp(0, std::ios::beg);
+	uint32_t count = files.size();
+	f.write(reinterpret_cast<char*>(&count), sizeof(uint32_t));
+
+	f.seekp(0x800, std::ios::beg);
+
+	std::streampos p;
+	for(size_t i = 0; i < files.size(); i++)
+	{
+		
+		printf("-- Writing \"%s\"\n", files[i].c_str());
+		std::ifstream _t(files[i], std::ios::binary | std::ios::ate);
+		size_t fsize = _t.tellg();
+		_t.seekg(0, std::ios::beg);
+		printf("   Size: %lu\n", fsize);
+		f << _t.rdbuf();
+		p = f.tellp();
+		f.seekp(i * sizeof(uint32_t) + sizeof(uint32_t), std::ios::beg);
+		uint32_t ptxSize = fsize / 2048;
+		f.write(reinterpret_cast<char*>(&ptxSize), sizeof(uint32_t));
+		f.seekp(p);
+		_t.close();
+	}
+
+	std::vector<char> buff;
+	std::string _buff = f.str();
+	buff.insert(buff.end(), _buff.begin(), _buff.end());
+	if(isc)
+	{
+		printf("-- Compressing file\n");
+		size_t _size = buff.size();
+		std::vector<char> out(_size / 2);
+		size_t csize = compress(buff, out);
+		out.resize(csize);
+
+		buff = std::move(out);
+	}
+	std::ofstream _f(origPath, std::ios::binary);
+	_f.write(buff.data(), buff.size());
+	_f.close();
 }
 
 void ptxUnpack(std::vector<char>& buffer, const char* dirname, std::filesystem::path basename, bool isc)
@@ -978,6 +1060,7 @@ void pack(const char* dirname)
 			momoPack(_dname.string(), _metadataFile.string(), filePath.string());
 			break;
 		case ptx:
+			ptxPack(_dname.string(), _metadataFile.string(), filePath.string());
 			break;
 		case tim2:
 			tim2Pack(_dname.string(), _metadataFile.string(), filePath.string());
