@@ -21,7 +21,7 @@ Supported assets for now:
     tm2
     ptx
     bin
-    ipu (extract only fn)
+    ipu
 
 Also compressed supported (like: `.biz`, `.ptz`)
 

@@ -296,6 +296,91 @@ struct ipumHeader
 	uint32_t framerate;
 };
 
+void ipumPack(std::string dirname, std::string metadataFile, std::string origPath)
+{
+	// header aka .meta.your.ipu
+	// dds size
+	// dds data
+	// frame end aka frame0.meta
+	bool isc = false;
+	std::string basename, line;
+	std::filesystem::path _tp = dirname;
+	std::vector<std::string> files;
+
+	std::ifstream meta(metadataFile);
+	std::getline(meta, basename);
+
+	while(std::getline(meta, line))
+	{
+		if(line.find("_compressed") != std::string::npos)
+		{
+			isc = true;
+			continue;
+		}
+		if(line == "") break;
+		_tp = _tp.append(line);
+		files.push_back(_tp.string());
+		_tp = dirname;
+
+	}
+	meta.close();
+
+	std::string fn = origPath + ".bak";
+	if(!std::filesystem::exists(fn))
+	{
+		std::ifstream _fib(origPath, std::ios::binary);
+		std::ofstream _fob(fn, std::ios::binary);
+		_fob << _fib.rdbuf();
+		_fob.close();
+		_fib.close();
+	}
+
+	std::ostringstream f(std::ios::binary);
+
+	_tp = _tp.append(".meta." + basename);
+	std::ifstream ipuHeader(_tp.string(), std::ios::binary);
+	f << ipuHeader.rdbuf();
+	ipuHeader.close();
+
+
+	for(size_t i = 0; i < files.size(); i++)
+	{	
+		printf("-- Writing \"%s\"\n", files[i].c_str());
+		std::ifstream _t(files[i], std::ios::binary | std::ios::ate);
+		size_t fsize = _t.tellg();
+		_t.seekg(0, std::ios::beg);
+		printf("   Size: %lu\n", fsize);
+		f << "frmj";
+		f.write(reinterpret_cast<char*>(&fsize), sizeof(uint32_t));
+		f << _t.rdbuf();
+		_t.close();
+		std::string ddsMeta = files[i].erase(files[i].size() - 3) + "meta";
+		_t.open(ddsMeta, std::ios::binary);
+		_t.seekg(0, std::ios::beg);
+		f.seekp(-4, std::ios::cur);
+		f << _t.rdbuf();
+		_t.close();
+	}
+
+	std::vector<char> buff;
+	std::string _buff = f.str();
+	buff.insert(buff.end(), _buff.begin(), _buff.end());
+	if(isc)
+	{
+		printf("-- Compressing file\n");
+		size_t _size = buff.size();
+		std::vector<char> out(_size / 2);
+		size_t csize = compress(buff, out);
+		out.resize(csize);
+
+		buff = std::move(out);
+	}
+	std::ofstream _f(origPath, std::ios::binary);
+	_f.write(buff.data(), buff.size());
+	_f.close();
+
+}
+
 void ipumUnpack(std::vector<char>& buffer, const char* dirname, std::filesystem::path basename, bool isc)
 {
 	std::istringstream f(std::string(buffer.begin(), buffer.end()), std::ios::binary);
@@ -323,15 +408,13 @@ void ipumUnpack(std::vector<char>& buffer, const char* dirname, std::filesystem:
 	{
 		_metadata << e << '\n';
 	}
-	delete [] _metan;
-	_metadata.close();
 
 	char* tc = new char[strlen(dirname) + strlen(basename.string().c_str()) + 6];
 	sprintf(tc, "%s/.meta.%s", dirname, basename.string().c_str());
 	std::ofstream metadata(tc, std::ios::binary);
 	metadata.write(reinterpret_cast<char*>(&ipu), sizeof(ipu));
-	metadata.close();
 	delete [] tc;
+	metadata.close();
 
 	for(uint32_t i = 0; i < ipu.frameCount; i++)
 	{
@@ -345,6 +428,7 @@ void ipumUnpack(std::vector<char>& buffer, const char* dirname, std::filesystem:
 		f.read(frameEnd, 4);
 		char* tn = new char[strlen(dirname) + sizeof(uint32_t) + 12];
 		sprintf(tn, "%s/frame%i.dds", dirname, i);
+		_metadata << "frame" << i << ".dds" << '\n';
 		char* tnm = new char[strlen(dirname) + sizeof(uint32_t) + 12 + 1];
 		sprintf(tnm, "%s/frame%i.meta", dirname, i);
 		printf("-- Writing texture to \"%s\"\n", tn);
@@ -359,6 +443,8 @@ void ipumUnpack(std::vector<char>& buffer, const char* dirname, std::filesystem:
 		delete [] tn;
 	}
 
+	delete [] _metan;
+	_metadata.close();
 }
 struct Tim2Header
 {
@@ -1061,6 +1147,7 @@ void pack(const char* dirname)
 			tim2Pack(_dname.string(), _metadataFile.string(), filePath.string());
 			break;
 		case ipu:
+			ipumPack(_dname.string(), _metadataFile.string(), filePath.string());
 			break;
 		default:
 			return;
