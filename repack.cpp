@@ -620,7 +620,7 @@ void ptxPack(std::string dirname, std::string metadataFile, std::string origPath
 		std::filesystem::path p = _tp;
 		p.append("_" + line);
 		if(std::filesystem::is_directory(p))
-			pack(p.c_str());
+			pack(p.string().c_str());
 		_tp = _tp.append(line);
 		files.push_back(_tp.string());
 		_tp = dirname;
@@ -805,7 +805,7 @@ void momoPack(std::string dirname, std::string metadataFile, std::string origPat
 		std::filesystem::path p = _tp;
 		p.append("_" + line);
 		if(std::filesystem::is_directory(p))
-			pack(p.c_str());
+			pack(p.string().c_str());
 		_tp = _tp.append(line);
 		files.push_back(_tp.string());
 		_tp = dirname;

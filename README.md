@@ -1,5 +1,7 @@
 # Unpacker tool for DMC2
 
+Only PC version of game (PS2 textures not supported)
+
 - --
 ## Usage:
 - #### Extract asset:
