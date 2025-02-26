@@ -30,7 +30,7 @@ Build is simple:
     ```shell
     g++ -o repack repack.cpp
     ```
-- Using CLang
+- Using Clang
     ```shell
     clang++ -o repack repack.cpp
     ```
