@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cassert>
 #include <cerrno>
 #include <cmath>
@@ -11,6 +12,7 @@
 #include <ios>
 #include <iosfwd>
 #include <iostream>
+#include <iterator>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -257,8 +259,8 @@ fileType findFileType(std::vector<char>& f, size_t fsize)
 				return ptx;
 			else
 			{
-				char lm2[4] = {f[0x12], f[0x13], f[0x14], f[0x15]}; // idk if right, but found only in basic.ptz
-				if(memcmp(lm2, tim2Header, 4) == 0)
+				auto findCompressedPtx = std::search(f.begin(), f.end(), std::begin(tim2Header), std::end(tim2Header));
+				if(findCompressedPtx != f.end())
 				{
 					std::vector<char> decompressed_data(DBUFFER_SIZE * sizeof(int16_t));
 					size_t decompressed_size = decompress(reinterpret_cast<int16_t*>(f.data()), reinterpret_cast<int16_t*>(decompressed_data.data()), decompressed_data.size());
@@ -876,14 +878,7 @@ void momoPack(std::string dirname, std::string metadataFile, std::string origPat
 		_t.close();
 	}
 	lastpos = f.tellp();
-	// if(lastpos % 64 != 0)
-	// {
-	// 	size_t old = lastpos;
-	// 	size_t newpos = (old + 63) & ~63;
-	// 	std::string _tmpBuff(newpos - lastpos, '\0');
-	// 	f.write(_tmpBuff.data(), _tmpBuff.size());
-	// 	lastpos = newpos;
-	// }	
+
 	std::vector<char> buff;
 	std::string _buff = f.str();
 	buff.insert(buff.end(), _buff.begin(), _buff.end());
