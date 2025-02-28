@@ -409,11 +409,11 @@ void ipumUnpack(std::vector<char>& buffer, const char* dirname, std::filesystem:
 		_metadata << e << '\n';
 	}
 
-	char* tc = new char[strlen(dirname) + strlen(basename.string().c_str()) + 6];
-	sprintf(tc, "%s/.meta.%s", dirname, basename.string().c_str());
+	// sprintf(tc, "%s/.meta.%s", dirname, basename.string().c_str());
+	std::filesystem::path tc = dirname;
+	tc = tc.append(".meta." + basename.string());
 	std::ofstream metadata(tc, std::ios::binary);
 	metadata.write(reinterpret_cast<char*>(&ipu), sizeof(ipu));
-	delete [] tc;
 	metadata.close();
 
 	for(uint32_t i = 0; i < ipu.frameCount; i++)
@@ -673,8 +673,10 @@ void tim2Unpack(std::vector<char>& buffer, const char* dirname, std::filesystem:
 	_metadata.close();
 
 	// dump a header or data to texture point
-	char* tc = new char[strlen(dirname) + strlen(basename.string().c_str()) + 8];
-	sprintf(tc, "%s/.meta.%s", dirname, basename.string().c_str());
+
+	// sprintf(tc, "%s/.meta.%s", dirname, basename.string().c_str());
+	std::filesystem::path tc = dirname;
+	tc = tc.append(".meta." + basename.string());
 	std::ofstream metadata(tc, std::ios::binary);
 	f.seekg(0, std::ios::beg);
 	char* _r = new char[pos];
@@ -682,7 +684,7 @@ void tim2Unpack(std::vector<char>& buffer, const char* dirname, std::filesystem:
 	metadata.write(_r, pos);
 	delete [] _r;
 	metadata.close();
-	delete [] tc;
+
 }
 
 void ptxPack(std::string dirname, std::string metadataFile, std::string origPath)
@@ -793,8 +795,10 @@ void ptxUnpack(std::vector<char>& buffer, const char* dirname, std::filesystem::
 		}
 	}
 
-	char* tc = new char[strlen(dirname) + 12];
-	sprintf(tc, "%s/.metadata", dirname);
+
+	// sprintf(tc, "%s/.metadata", dirname);
+	std::filesystem::path tc = dirname;
+	tc = tc.append(".metadata");
 	std::vector<std::string> metadataBuffer;
 	metadataBuffer.push_back(basename.string());
 	if(isc)
@@ -840,7 +844,7 @@ void ptxUnpack(std::vector<char>& buffer, const char* dirname, std::filesystem::
 	{
 		metadata << e << '\n';
 	}
-	delete [] tc;
+
 	metadata.close();
 }
 
@@ -1037,8 +1041,10 @@ void momoUnpack(std::vector<char>& buffer, const char* dirname, std::filesystem:
 
 	size_t bsize = mb ? mBlocks.size() : blocks.size();
 
-	char* tc = new char[strlen(dirname) + 12];
-	sprintf(tc, "%s/.metadata", dirname);
+
+	// sprintf(tc, "%s/.metadata", dirname);
+	std::filesystem::path tc = dirname;
+	tc = tc.append(".metadata");
 	std::vector<std::string> metadataBuffer;
 	metadataBuffer.push_back(basename.string());
 	if(isc)
@@ -1104,7 +1110,7 @@ void momoUnpack(std::vector<char>& buffer, const char* dirname, std::filesystem:
 	{
 		metadata << e << '\n';
 	}
-	delete [] tc;
+
 	metadata.close();
 }
 
